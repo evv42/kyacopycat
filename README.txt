@@ -44,8 +44,8 @@ the "LEAP" keys to the Control ones, the "UNDO" key to the Home key and the
 
 HOW TO BUILD
 
-for building this emulator you will need a UNIX system with a copy of the SDL2 
-library and a working C compiler
+for building this emulator you will need a UNIX system with a copy of either 
+the SDL2 library or Xlib and a working C compiler
 note that the Musashi 68K emulator won't compile correctly with BSD make
 
 please consult the config.h header and the build.sh script for more information

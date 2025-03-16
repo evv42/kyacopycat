@@ -20,4 +20,5 @@ Thumbs.db
 *.orig
 
 kyacopycat
-kyacopycat.o
+kyacopycat_xlib
+*.o

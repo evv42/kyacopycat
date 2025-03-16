@@ -25,6 +25,15 @@ void change_keyreg_state(unsigned char y, unsigned char x, unsigned char state);
 #include "sdlkeymess.h"
 #endif
 
+#ifdef XLIB_UI
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#include <X11/Xos.h>
+#include <X11/Xatom.h>
+#include <X11/Xlocale.h>
+#include "xkeymess.h"
+/*#include <X11/extensions/Xrender.h>*/
+#endif
 
 /*inverted*/
 #define BYTE_TO_BIN_PATTERN "%c%c%c%c%c%c%c%c"
@@ -96,6 +105,7 @@ unsigned char v_zero = 0;
 unsigned char v_one = 0;
 unsigned char v_blank = 0;
 
+#ifdef SDL_UI
 #ifdef FASTER_VIDEO
 INLINE void update_pixel(unsigned int p, unsigned char value){
 	for(unsigned char i = 0; i<8; i++)framebuffer[(p*8)+i] = value & (0x80 >> i) ? v_zero : v_one;
@@ -122,6 +132,36 @@ void update_framebuffer(){
 		framebuffer[(i*8)+7] = main_ram[i] & 0x01 ? v_zero : v_one;*/
 	}
 }
+#elif defined(XLIB_UI)
+#ifdef FASTER_VIDEO
+INLINE void update_pixel(unsigned int p, unsigned char value){
+	framebuffer[p] = 0;
+	framebuffer[p] |= ((value & 0x80) >> (7));
+	framebuffer[p] |= ((value & 0x40) >> (5));
+	framebuffer[p] |= ((value & 0x20) >> (3));
+	framebuffer[p] |= ((value & 0x10) >> (1));
+	framebuffer[p] |= ((value & 0x08) << (1));
+	framebuffer[p] |= ((value & 0x04) << (3));
+	framebuffer[p] |= ((value & 0x02) << (5));
+	framebuffer[p] |= ((value & 0x01) << (7));
+	if(v_zero)framebuffer[p] = ~framebuffer[p];
+}
+#endif
+void update_framebuffer(){
+	for(int p=0; p<28896; p++){
+		framebuffer[p] = 0;
+		framebuffer[p] |= ((main_ram[p] & 0x80) >> (7));
+		framebuffer[p] |= ((main_ram[p] & 0x40) >> (5));
+		framebuffer[p] |= ((main_ram[p] & 0x20) >> (3));
+		framebuffer[p] |= ((main_ram[p] & 0x10) >> (1));
+		framebuffer[p] |= ((main_ram[p] & 0x08) << (1));
+		framebuffer[p] |= ((main_ram[p] & 0x04) << (3));
+		framebuffer[p] |= ((main_ram[p] & 0x02) << (5));
+		framebuffer[p] |= ((main_ram[p] & 0x01) << (7));
+		if(v_zero)framebuffer[p] = ~framebuffer[p];
+	}
+}
+#endif
 
 void change_keyreg_state(unsigned char y, unsigned char x, unsigned char state){
 	if(y > 7 || x > 7)return;
@@ -422,6 +462,8 @@ m68k_set_cpu_type(M68K_CPU_TYPE_68000);
 m68k_pulse_reset();
 m68k_get_context(cpu);
 
+snprintf(title, 256, "kya! copycat da! (%dx scale, %4.2F%% speed)", scale, speed*100);
+
 #ifdef SDL_UI
 /*behold, the sdl horrors*/
 SDL_Renderer *renderer;
@@ -429,7 +471,6 @@ SDL_Texture *texture;
 SDL_Event event;
 
 SDL_Init(SDL_INIT_VIDEO);
-snprintf(title, 256, "kya! copycat da! (%dx scale, %4.2F%% speed)", scale, speed*100);
 SDL_Window *window = SDL_CreateWindow(title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, DISP_W * scale, DISP_H * scale, 0);
 if (!window)return crash("SDL window");
 
@@ -440,6 +481,46 @@ SDL_SetRenderDrawColor(renderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
 texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB332, SDL_TEXTUREACCESS_STATIC, DISP_W, DISP_H);
 if (!texture)return crash("SDL texture");
 /*end of the sdl horrors, you can take a breath*/
+#endif
+
+#ifdef XLIB_UI
+Display* dis;
+int screen;
+Window xw;
+GC gc;
+Atom wm_delete_window;
+char* drawbuf;
+
+setlocale(LC_ALL, "");
+
+char *dn = getenv("DISPLAY");
+dis=XOpenDisplay(dn);
+screen=DefaultScreen(dis);
+const unsigned long black=BlackPixel(dis, screen);  /* get color black */
+const unsigned long white=WhitePixel(dis, screen);  /* get color white */
+
+xw=XCreateSimpleWindow(dis,DefaultRootWindow(dis),0,0,DISP_W, DISP_H, 5, black, white);
+
+//select allowed inputs
+XSelectInput(dis, xw, ExposureMask|KeyPressMask|KeyReleaseMask);
+
+//create gc
+gc=XCreateGC(dis, xw, 0,0);
+
+//set def col
+XSetBackground(dis,gc,white);
+XSetForeground(dis,gc,black);
+
+//clear win
+XClearWindow(dis, xw);
+
+//set win name (mantadory)
+XStoreName(dis,xw,title);
+
+XMapRaised(dis, xw);
+wm_delete_window = XInternAtom(dis, "WM_DELETE_WINDOW", False);
+XSetWMProtocols(dis, xw, &wm_delete_window, 1);
+XSync(dis, False);
 #endif
 
 unsigned char run = 1;
@@ -521,6 +602,63 @@ while(run){
 			} break;
 		}
 	}
+#endif
+
+#ifdef XLIB_UI
+	if(!v_blank){
+		if( /*(trg % 2) &&*/ vram_touched ){
+		//Pixmap p = XCreateBitmapFromData(dis, xw, main_ram, DISP_W, DISP_H);
+		#ifndef FASTER_VIDEO
+		update_framebuffer();
+		#endif
+		Pixmap p = XCreateBitmapFromData(dis, xw, framebuffer, DISP_W, DISP_H);
+		XCopyPlane(dis, p, xw,gc, 0,0,DISP_W,DISP_H,0,0,1);
+		/*XVisualInfo v;
+		XImage* image;
+		unsigned char buf[DISP_W*DISP_H*4];
+		XMatchVisualInfo(dis, screen, 32, TrueColor, &v);
+		image = XCreateImage(dis, v.visual, 24, ZPixmap, 0, buf, DISP_W, DISP_H, 32, 0);
+		//image->byte_order = MSBFirst;//Image is big-endian
+		for(int i=0; i<DISP_W*DISP_H; i++)memset(buf+(i*4),framebuffer[i],4);
+		XPutImage(dis, xw, gc, image, 0, 0, 0, 0, DISP_W, DISP_H);*/
+		XSync(dis, False);
+		vram_touched = 0;
+		}
+	}else{
+		if(v_blank == 1){
+			XClearWindow(dis,xw);
+			v_blank++;
+		}
+	}
+	{
+
+	}
+XEvent event;//event buffer
+	XWindowAttributes xa = {0};
+	int nx,ny;
+        if(XPending(dis) != 0){
+			XNextEvent(dis, &event);
+			KeySym key;
+			char text[4];
+			int ts;
+			switch(event.type){
+				case Expose:
+					if(event.xexpose.count == 0);
+					break;
+				case KeyPress: case KeyRelease:
+					ts = XLookupString(&event.xkey,text,4,&key,0);
+					const unsigned int sym = text[0];
+					const unsigned char state = (event.type == KeyRelease);
+					if( remap && ((sym <= 0x5A && sym >=0x41) || (sym <= 0x7A && sym >=0x61)) )handle_xlib_char(sym, state);
+					else handle_xlib_code(event.xkey.keycode, state);
+					break;
+				case ClientMessage:
+					if ((Atom)event.xclient.data.l[0] == wm_delete_window) {
+						run=0;
+					}
+					break;
+			}
+		}
 #endif
 
 #ifdef SERIAL_IO
